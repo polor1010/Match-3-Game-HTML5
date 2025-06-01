@@ -56,9 +56,7 @@ window.onload = function() {
                       [128, 255, 128],
                       [128, 128, 255],
                       [255, 255, 128],
-                      [255, 128, 255],
-                      [128, 255, 255],
-                      [255, 255, 255]];
+                      [255, 128, 255]];
     
     // Clusters and moves that were found
     var clusters = [];  // { column, row, length, horizontal }
@@ -71,22 +69,41 @@ window.onload = function() {
     var gamestates = { init: 0, ready: 1, resolve: 2 };
     var gamestate = gamestates.init;
     
-    // Score
-    var score = 0;
-    
-    // Bonus display variables
-    var bonusDisplay = { active: false, text: "", time: 0, maxTime: 2.0 };
-    
     // Color elimination statistics
     var colorStats = [];
     
-    // Initialize color statistics
-    function initColorStats() {
-        colorStats = [];
-        for (var i = 0; i < tilecolors.length; i++) {
-            colorStats[i] = 0;
+    // Timer functionality
+    var gameTimer = 0; // Time in seconds since game started
+    var timerRunning = false;
+    
+    // Level system
+    var currentLevel = 1;
+    var maxLevel = 3;
+    var levelObjectives = [
+        { // Level 1 - Easy
+            name: "Level 1: Beginner",
+            description: "Eliminate 50 tiles total",
+            targetTotal: 50,
+            timeLimit: 0, // No time limit
+            colors: 5
+        },
+        { // Level 2 - Medium  
+            name: "Level 2: Intermediate", 
+            description: "Get 100 points in 3 minutes",
+            targetTotal: 100,
+            timeLimit: 180, // 3 minutes
+            colors: 4
+        },
+        { // Level 3 - Hard
+            name: "Level 3: Expert",
+            description: "Get 200 points in 2 minutes",
+            targetTotal: 200, 
+            timeLimit: 120, // 2 minutes
+            colors: 3
         }
-    }
+    ];
+    var totalScore = 0; // Total points across all colors
+    var levelComplete = false;
     
     // Animation variables
     var animationstate = 0;
@@ -103,9 +120,12 @@ window.onload = function() {
     var gameover = false;
     
     // Gui buttons
-    var buttons = [ { x: 30, y: 170, width: 150, height: 50, text: "New Game"},
-                    { x: 30, y: 230, width: 150, height: 50, text: "Show Moves"},
-                    { x: 30, y: 290, width: 150, height: 50, text: "Enable AI Bot"}];
+    var buttons = [ { x: 25, y: 315, width: 180, height: 45, text: "New Game"},
+                    { x: 25, y: 365, width: 180, height: 45, text: "Show Moves"},
+                    { x: 25, y: 415, width: 180, height: 45, text: "Enable AI Bot"},
+                    { x: 25, y: 470, width: 85, height: 28, text: "Level 1"},
+                    { x: 120, y: 470, width: 85, height: 28, text: "Level 2"},
+                    { x: 25, y: 505, width: 85, height: 28, text: "Level 3"}];
     
     // Initialize the game
     function init() {
@@ -149,12 +169,21 @@ window.onload = function() {
         // Update the fps counter
         updateFps(dt);
         
-        // Update bonus display
-        if (bonusDisplay.active) {
-            bonusDisplay.time += dt;
-            if (bonusDisplay.time >= bonusDisplay.maxTime) {
-                bonusDisplay.active = false;
+        // Update timer if game is running
+        if (timerRunning && !gameover && !levelComplete) {
+            gameTimer += dt;
+            
+            // Check time limit for current level
+            var objective = levelObjectives[currentLevel - 1];
+            if (objective.timeLimit > 0 && gameTimer >= objective.timeLimit) {
+                gameover = true;
+                timerRunning = false;
             }
+        }
+        
+        // Check level completion
+        if (!levelComplete && !gameover) {
+            checkLevelCompletion();
         }
         
         if (gamestate == gamestates.ready) {
@@ -163,6 +192,7 @@ window.onload = function() {
             // Check for game over
             if (moves.length <= 0) {
                 gameover = true;
+                timerRunning = false; // Stop timer when game is over
             }
             
             // Let the AI bot make a move, if enabled
@@ -196,31 +226,6 @@ window.onload = function() {
                     findClusters();
                     
                     if (clusters.length > 0) {
-                        // Add points to the score with bonus for longer matches
-                        for (var i=0; i<clusters.length; i++) {
-                            var basePoints = 100 * (clusters[i].length - 2);
-                            var bonusMultiplier = 1;
-                            var bonusText = "";
-                            
-                            // Add bonus for 4-match and 5+ match
-                            if (clusters[i].length == 4) {
-                                bonusMultiplier = 2; // Double points for 4-match
-                                bonusText = "4-MATCH BONUS! x2";
-                            } else if (clusters[i].length >= 5) {
-                                bonusMultiplier = 3; // Triple points for 5+ match
-                                bonusText = "5+ MATCH BONUS! x3";
-                            }
-                            
-                            score += basePoints * bonusMultiplier;
-                            
-                            // Show bonus message
-                            if (bonusText !== "") {
-                                bonusDisplay.active = true;
-                                bonusDisplay.text = bonusText;
-                                bonusDisplay.time = 0;
-                            }
-                        }
-                    
                         // Clusters found, remove them
                         removeClusters();
                         
@@ -316,12 +321,6 @@ window.onload = function() {
         // Draw the frame
         drawFrame();
         
-        // Draw score
-        context.fillStyle = "#000000";
-        context.font = "24px Verdana";
-        drawCenterText("Score:", 30, 100, 150);
-        drawCenterText(score, 30, 130, 150);
-        
         // Draw buttons
         drawButtons();
         
@@ -359,10 +358,11 @@ window.onload = function() {
         // Draw color elimination statistics
         drawColorStats();
         
-        // Draw bonus display
-        if (bonusDisplay.active) {
-            drawBonusDisplay();
-        }
+        // Draw timer
+        drawTimer();
+        
+        // Draw level information
+        drawLevelInfo();
         
         // Game Over overlay
         if (gameover) {
@@ -371,7 +371,25 @@ window.onload = function() {
             
             context.fillStyle = "#ffffff";
             context.font = "24px Verdana";
-            drawCenterText("Game Over!", level.x, level.y + levelheight / 2 + 10, levelwidth);
+            if (levelComplete) {
+                drawCenterText("Level Complete!", level.x, level.y + levelheight / 2 - 20, levelwidth);
+                context.font = "16px Verdana";
+                drawCenterText("Score: " + totalScore, level.x, level.y + levelheight / 2 + 10, levelwidth);
+            } else {
+                drawCenterText("Game Over!", level.x, level.y + levelheight / 2 + 10, levelwidth);
+            }
+        }
+        
+        // Level Complete overlay (separate from game over)
+        if (levelComplete && !gameover) {
+            context.fillStyle = "rgba(0, 255, 0, 0.8)";
+            context.fillRect(level.x, level.y, levelwidth, levelheight);
+            
+            context.fillStyle = "#ffffff";
+            context.font = "24px Verdana";
+            drawCenterText("Level Complete!", level.x, level.y + levelheight / 2 - 20, levelwidth);
+            context.font = "16px Verdana";
+            drawCenterText("Score: " + totalScore, level.x, level.y + levelheight / 2 + 10, levelwidth);
         }
     }
     
@@ -401,81 +419,126 @@ window.onload = function() {
     // Draw buttons
     function drawButtons() {
         for (var i=0; i<buttons.length; i++) {
-            // Draw button shape
-            context.fillStyle = "#000000";
+            // Draw button shape with improved styling
+            context.fillStyle = "#2c3e50";
             context.fillRect(buttons[i].x, buttons[i].y, buttons[i].width, buttons[i].height);
             
-            // Draw button text
+            // Add button border
+            context.strokeStyle = "#34495e";
+            context.lineWidth = 1;
+            context.strokeRect(buttons[i].x, buttons[i].y, buttons[i].width, buttons[i].height);
+            
+            // Draw button text with better positioning
             context.fillStyle = "#ffffff";
-            context.font = "18px Verdana";
+            var fontSize = buttons[i].height > 30 ? "14px" : "11px";
+            context.font = fontSize + " Verdana";
             var textdim = context.measureText(buttons[i].text);
-            context.fillText(buttons[i].text, buttons[i].x + (buttons[i].width-textdim.width)/2, buttons[i].y+30);
+            var textY = buttons[i].y + (buttons[i].height / 2) + 4;
+            context.fillText(buttons[i].text, buttons[i].x + (buttons[i].width-textdim.width)/2, textY);
         }
     }
     
     // Draw color elimination statistics
     function drawColorStats() {
-        var startX = 30;
-        var startY = 360;
-        var tileSize = 20;
-        var spacing = 30;
-        var columnWidth = 75; // Width for each column
+        var startX = 25;
+        var startY = 100; // Moved down from 85 to 100 for better spacing
+        var tileSize = 16;
+        var spacing = 22;
+        var columnWidth = 85;
         
-        // Draw title
-        context.fillStyle = "#000000";
-        context.font = "16px Verdana";
-        context.fillText("Color Stats:", startX, startY);
+        // Draw title with background
+        context.fillStyle = "#f8f8f8";
+        context.fillRect(startX - 3, startY - 22, 180, 95);
+        context.strokeStyle = "#d0d0d0";
+        context.lineWidth = 1;
+        context.strokeRect(startX - 3, startY - 22, 180, 95);
         
-        // Draw each color and its count in two columns
+        context.fillStyle = "#333333";
+        context.font = "13px Verdana";
+        context.fillText("COLOR STATISTICS", startX, startY - 8);
+        
+        // Draw each color and its count in a more compact layout
         for (var i = 0; i < tilecolors.length; i++) {
-            var column = Math.floor(i / 4); // 4 colors per column (0-3 in first column, 4-6 in second)
-            var row = i % 4; // Row within the column
+            var column = Math.floor(i / 3); 
+            var row = i % 3; 
             
             var x = startX + column * columnWidth;
-            var y = startY + 25 + row * spacing;
+            var y = startY + 8 + row * spacing;
             
             // Draw color tile
             var col = tilecolors[i];
             context.fillStyle = "rgb(" + col[0] + "," + col[1] + "," + col[2] + ")";
-            context.fillRect(x, y - tileSize + 5, tileSize, tileSize);
+            context.fillRect(x, y - tileSize + 3, tileSize, tileSize);
             
             // Draw border around tile
-            context.strokeStyle = "#000000";
+            context.strokeStyle = "#333333";
             context.lineWidth = 1;
-            context.strokeRect(x, y - tileSize + 5, tileSize, tileSize);
+            context.strokeRect(x, y - tileSize + 3, tileSize, tileSize);
             
             // Draw count
-            context.fillStyle = "#000000";
-            context.font = "12px Verdana";
-            context.fillText(": " + colorStats[i], x + tileSize + 3, y);
+            context.fillStyle = "#333333";
+            context.font = "11px Verdana";
+            context.fillText(": " + colorStats[i], x + tileSize + 4, y);
         }
     }
     
-    // Draw bonus display message
-    function drawBonusDisplay() {
-        var centerX = level.x + (level.columns * level.tilewidth) / 2;
-        var centerY = level.y + (level.rows * level.tileheight) / 2 - 50;
+    // Draw timer
+    function drawTimer() {
+        var minutes = Math.floor(gameTimer / 60);
+        var remainingSeconds = Math.floor(gameTimer % 60);
+        var formattedTime = (minutes < 10 ? "0" : "") + minutes + ":" + 
+                           (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
         
-        // Calculate fade effect
-        var alpha = 1.0 - (bonusDisplay.time / bonusDisplay.maxTime);
-        if (alpha < 0) alpha = 0;
+        context.fillStyle = "#ffffff";
+        context.font = "16px Verdana";
+        context.fillText("Time: " + formattedTime, 200, 30);
+    }
+    
+    // Draw level information
+    function drawLevelInfo() {
+        var objective = levelObjectives[currentLevel - 1];
         
-        // Draw background
-        context.fillStyle = "rgba(255, 215, 0, " + (alpha * 0.8) + ")";
-        var textWidth = context.measureText(bonusDisplay.text).width;
-        context.fillRect(centerX - textWidth/2 - 10, centerY - 25, textWidth + 20, 40);
+        // Position level info below color stats with proper spacing
+        var leftX = 25;
+        var startY = 220; // Moved down from 200 to 220 for better spacing
         
-        // Draw border
-        context.strokeStyle = "rgba(255, 165, 0, " + alpha + ")";
-        context.lineWidth = 2;
-        context.strokeRect(centerX - textWidth/2 - 10, centerY - 25, textWidth + 20, 40);
+        // Draw a subtle background for level info section
+        context.fillStyle = "#f8f8f8";
+        context.fillRect(leftX - 3, startY - 18, 180, 85);
+        context.strokeStyle = "#d0d0d0";
+        context.lineWidth = 1;
+        context.strokeRect(leftX - 3, startY - 18, 180, 85);
         
-        // Draw text
-        context.fillStyle = "rgba(255, 0, 0, " + alpha + ")";
-        context.font = "bold 18px Verdana";
-        context.textAlign = "center";
-        context.fillText(bonusDisplay.text, centerX, centerY);
-        context.textAlign = "left"; // Reset text alignment
+        context.fillStyle = "#333333";
+        context.font = "13px Verdana";
+        context.fillText("LEVEL INFORMATION", leftX, startY - 4);
+        
+        // Current level
+        context.font = "11px Verdana";
+        context.fillText("Current: Level " + currentLevel, leftX, startY + 12);
+        
+        // Draw objective name (shortened)
+        var levelName = "L" + currentLevel + ": " + (currentLevel === 1 ? "Beginner" : currentLevel === 2 ? "Intermediate" : "Expert");
+        context.fillText(levelName, leftX, startY + 26);
+        
+        // Draw progress
+        totalScore = 0;
+        for (var i = 0; i < colorStats.length; i++) {
+            totalScore += colorStats[i];
+        }
+        context.fillText("Score: " + totalScore + "/" + objective.targetTotal, leftX, startY + 40);
+        
+        // Draw time remaining if there's a time limit
+        if (objective.timeLimit > 0) {
+            var timeRemaining = Math.max(0, objective.timeLimit - gameTimer);
+            var minutes = Math.floor(timeRemaining / 60);
+            var seconds = Math.floor(timeRemaining % 60);
+            var timeText = "Time: " + (minutes < 10 ? "0" : "") + minutes + ":" + 
+                          (seconds < 10 ? "0" : "") + seconds;
+            context.fillText(timeText, leftX, startY + 54);
+        } else {
+            context.fillText("Time: Unlimited", leftX, startY + 54);
+        }
     }
     
     // Render tiles
@@ -623,11 +686,11 @@ window.onload = function() {
     
     // Start a new game
     function newGame() {
-        // Reset score
-        score = 0;
-        
-        // Initialize color elimination statistics
-        initColorStats();
+        // Reset timer and level completion
+        gameTimer = 0;
+        timerRunning = true;
+        levelComplete = false;
+        totalScore = 0;
         
         // Set the gamestate to ready
         gamestate = gamestates.ready;
@@ -650,6 +713,9 @@ window.onload = function() {
         // Find initial clusters and moves
         findMoves();
         findClusters(); 
+        
+        // Initialize color elimination statistics after level creation
+        initColorStats();
     }
     
     // Create a random level
@@ -681,7 +747,8 @@ window.onload = function() {
     
     // Get a random tile
     function getRandomTile() {
-        return Math.floor(Math.random() * tilecolors.length);
+        var objective = levelObjectives[currentLevel - 1];
+        return Math.floor(Math.random() * objective.colors);
     }
     
     // Remove clusters and insert tiles
@@ -842,11 +909,18 @@ window.onload = function() {
     // Remove the clusters
     function removeClusters() {
         // Change the type of the tiles to -1, indicating a removed tile
-        // Also track color elimination statistics
+        // Also track color elimination statistics with new scoring system
         loopClusters(function(index, column, row, cluster) { 
             var tileType = level.tiles[column][row].type;
             if (tileType >= 0 && tileType < colorStats.length) {
-                colorStats[tileType]++;
+                // Only count points for the first tile of each cluster to avoid double counting
+                if ((cluster.horizontal && column === cluster.column) || 
+                    (!cluster.horizontal && row === cluster.row)) {
+                    // Calculate points: 3 × (cluster length - 2)
+                    // 3 tiles = 3×1 = 3, 4 tiles = 3×2 = 6, 5 tiles = 3×3 = 9, etc.
+                    var points = 3 * (cluster.length - 2);
+                    colorStats[tileType] += points;
+                }
             }
             level.tiles[column][row].type = -1; 
         });
@@ -1059,6 +1133,18 @@ window.onload = function() {
                     // AI Bot
                     aibot = !aibot;
                     buttons[i].text = (aibot?"Disable":"Enable") + " AI Bot";
+                } else if (i == 3) {
+                    // Level 1
+                    currentLevel = 1;
+                    newGame();
+                } else if (i == 4) {
+                    // Level 2
+                    currentLevel = 2;
+                    newGame();
+                } else if (i == 5) {
+                    // Level 3
+                    currentLevel = 3;
+                    newGame();
                 }
             }
         }
@@ -1081,6 +1167,39 @@ window.onload = function() {
             x: Math.round((e.clientX - rect.left)/(rect.right - rect.left)*canvas.width),
             y: Math.round((e.clientY - rect.top)/(rect.bottom - rect.top)*canvas.height)
         };
+    }
+    
+    // Initialize color statistics
+    function initColorStats() {
+        colorStats = [];
+        for (var i = 0; i < tilecolors.length; i++) {
+            colorStats[i] = 0;
+        }
+    }
+    
+    // Format time as MM:SS
+    function formatTime(seconds) {
+        var minutes = Math.floor(seconds / 60);
+        var remainingSeconds = Math.floor(seconds % 60);
+        return (minutes < 10 ? "0" : "") + minutes + ":" + 
+               (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
+    }
+    
+    // Check if level objectives are completed
+    function checkLevelCompletion() {
+        var objective = levelObjectives[currentLevel - 1];
+        
+        // Calculate total score
+        totalScore = 0;
+        for (var i = 0; i < colorStats.length; i++) {
+            totalScore += colorStats[i];
+        }
+        
+        // Check if objective is met
+        if (totalScore >= objective.targetTotal) {
+            levelComplete = true;
+            timerRunning = false;
+        }
     }
     
     // Call init to start the game
