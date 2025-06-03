@@ -133,7 +133,7 @@ window.onload = function() {
     var llmaiDelay = 2.0; // Delay between LLM AI moves (2 seconds)
     
     // Gemini API configuration
-    var geminiApiKey = "AIzaSyCXAFwYFZVrSBVnwGU3MUpMMgCpnwFr8qQ"; // User will need to set this
+    var geminiApiKey = ""; // User will need to set this
     var geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
     
     // Game Over
