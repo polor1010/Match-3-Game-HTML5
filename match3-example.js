@@ -75,6 +75,7 @@ window.onload = function() {
     // Timer functionality
     var gameTimer = 0; // Time in seconds since game started
     var timerRunning = false;
+    var gameStarted = false; // Track if player has made their first move
     
     // Level system
     var currentLevel = 1;
@@ -82,28 +83,37 @@ window.onload = function() {
     var levelObjectives = [
         { // Level 1 - Easy
             name: "Level 1: Beginner",
-            description: "Eliminate 50 tiles total",
+            description: "Get 50 points in 10 moves",
             targetTotal: 50,
-            timeLimit: 0, // No time limit
+            moveLimit: 10, // 30 moves allowed
             colors: 5
         },
         { // Level 2 - Medium  
             name: "Level 2: Intermediate", 
-            description: "Get 100 points in 3 minutes",
+            description: "Get 100 points in 25 moves",
             targetTotal: 100,
-            timeLimit: 180, // 3 minutes
+            moveLimit: 25, // 25 moves allowed
             colors: 4
         },
         { // Level 3 - Hard
             name: "Level 3: Expert",
-            description: "Get 200 points in 2 minutes",
+            description: "Get 200 points in 20 moves",
             targetTotal: 200, 
-            timeLimit: 120, // 2 minutes
+            moveLimit: 20, // 20 moves allowed
             colors: 3
         }
     ];
     var totalScore = 0; // Total points across all colors
     var levelComplete = false;
+    
+    // Game statistics tracking
+    var gameStats = {
+        moveCount: 0,        // Total number of moves made
+        match3Count: 0,      // Number of 3-tile matches
+        match4Count: 0,      // Number of 4-tile matches
+        match5Count: 0,      // Number of 5+ tile matches
+        completionTime: 0    // Time when level was completed
+    };
     
     // Animation variables
     var animationstate = 0;
@@ -116,16 +126,27 @@ window.onload = function() {
     // The AI bot
     var aibot = false;
     
+    // The LLM AI
+    var llmai = false;
+    var llmaiProcessing = false; // Track if LLM AI is processing a move
+    var llmaiAnimationTime = 0;
+    var llmaiDelay = 2.0; // Delay between LLM AI moves (2 seconds)
+    
+    // Gemini API configuration
+    var geminiApiKey = "AIzaSyCXAFwYFZVrSBVnwGU3MUpMMgCpnwFr8qQ"; // User will need to set this
+    var geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+    
     // Game Over
     var gameover = false;
     
     // Gui buttons
-    var buttons = [ { x: 25, y: 315, width: 180, height: 45, text: "New Game"},
-                    { x: 25, y: 365, width: 180, height: 45, text: "Show Moves"},
-                    { x: 25, y: 415, width: 180, height: 45, text: "Enable AI Bot"},
-                    { x: 25, y: 470, width: 85, height: 28, text: "Level 1"},
-                    { x: 120, y: 470, width: 85, height: 28, text: "Level 2"},
-                    { x: 25, y: 505, width: 85, height: 28, text: "Level 3"}];
+    var buttons = [ { x: 25, y: 315, width: 180, height: 35, text: "New Game"},
+                    { x: 25, y: 355, width: 180, height: 35, text: "Show Moves"},
+                    { x: 25, y: 395, width: 180, height: 35, text: "Enable AI Bot"},
+                    { x: 25, y: 435, width: 180, height: 35, text: "LLM AI"},
+                    { x: 25, y: 480, width: 85, height: 25, text: "Level 1"},
+                    { x: 120, y: 480, width: 85, height: 25, text: "Level 2"},
+                    { x: 25, y: 510, width: 85, height: 25, text: "Level 3"}];
     
     // Initialize the game
     function init() {
@@ -173,9 +194,9 @@ window.onload = function() {
         if (timerRunning && !gameover && !levelComplete) {
             gameTimer += dt;
             
-            // Check time limit for current level
+            // Check move limit for current level instead of time limit
             var objective = levelObjectives[currentLevel - 1];
-            if (objective.timeLimit > 0 && gameTimer >= objective.timeLimit) {
+            if (gameStats.moveCount >= objective.moveLimit) {
                 gameover = true;
                 timerRunning = false;
             }
@@ -195,8 +216,8 @@ window.onload = function() {
                 timerRunning = false; // Stop timer when game is over
             }
             
-            // Let the AI bot make a move, if enabled
-            if (aibot) {
+            // Let the AI bot make a move, if enabled and game is still active
+            if (aibot && !levelComplete && !gameover) {
                 animationtime += dt;
                 if (animationtime > animationtimetotal) {
                     // Check if there are moves available
@@ -213,6 +234,29 @@ window.onload = function() {
                         // newGame();
                     }
                     animationtime = 0;
+                }
+            }
+            
+            // Let the LLM AI (Gemini) make a move, if enabled and game is still active
+            if (llmai && !levelComplete && !gameover && !llmaiProcessing) {
+                llmaiAnimationTime += dt;
+                if (llmaiAnimationTime > llmaiDelay) {
+                    // Check if there are moves available
+                    findMoves();
+                    
+                    if (moves.length > 0) {
+                        // Get move suggestion from Gemini
+                        getGeminiMove().then(function(moveData) {
+                            if (moveData && !levelComplete && !gameover) {
+                                // Execute the move suggested by Gemini
+                                mouseSwap(moveData.fromCol, moveData.fromRow, moveData.toCol, moveData.toRow);
+                                console.log("Executed Gemini move:", moveData.reasoning);
+                            }
+                        }).catch(function(error) {
+                            console.error("Failed to get Gemini move:", error);
+                        });
+                    }
+                    llmaiAnimationTime = 0;
                 }
             }
         } else if (gamestate == gamestates.resolve) {
@@ -387,9 +431,24 @@ window.onload = function() {
             
             context.fillStyle = "#ffffff";
             context.font = "24px Verdana";
-            drawCenterText("Level Complete!", level.x, level.y + levelheight / 2 - 20, levelwidth);
-            context.font = "16px Verdana";
-            drawCenterText("Score: " + totalScore, level.x, level.y + levelheight / 2 + 10, levelwidth);
+            drawCenterText("Level Complete!", level.x, level.y + levelheight / 2 - 80, levelwidth);
+            
+            // Display detailed statistics
+            context.font = "14px Verdana";
+            drawCenterText("Final Score: " + totalScore, level.x, level.y + levelheight / 2 - 50, levelwidth);
+            
+            // Show move efficiency
+            var objective = levelObjectives[currentLevel - 1];
+            var movesRemaining = objective.moveLimit - gameStats.moveCount;
+            drawCenterText("Moves Used: " + gameStats.moveCount + "/" + objective.moveLimit + " (Saved: " + movesRemaining + ")", level.x, level.y + levelheight / 2 - 30, levelwidth);
+            
+            // Format completion time (still useful to show how long it took)
+            var minutes = Math.floor(gameStats.completionTime / 60);
+            var seconds = Math.floor(gameStats.completionTime % 60);
+            var timeText = (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+            drawCenterText("Time Taken: " + timeText, level.x, level.y + levelheight / 2 - 10, levelwidth);
+            
+            drawCenterText("3-Match: " + gameStats.match3Count + "  4-Match: " + gameStats.match4Count + "  5+Match: " + gameStats.match5Count, level.x, level.y + levelheight / 2 + 10, levelwidth);
         }
     }
     
@@ -484,14 +543,22 @@ window.onload = function() {
     
     // Draw timer
     function drawTimer() {
-        var minutes = Math.floor(gameTimer / 60);
-        var remainingSeconds = Math.floor(gameTimer % 60);
-        var formattedTime = (minutes < 10 ? "0" : "") + minutes + ":" + 
-                           (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
-        
-        context.fillStyle = "#ffffff";
-        context.font = "16px Verdana";
-        context.fillText("Time: " + formattedTime, 200, 30);
+        if (!gameStarted) {
+            // Show ready message before first move
+            context.fillStyle = "#ffffff";
+            context.font = "16px Verdana";
+            context.fillText("Time: Ready to Start", 200, 30);
+        } else {
+            // Show actual timer after game starts
+            var minutes = Math.floor(gameTimer / 60);
+            var remainingSeconds = Math.floor(gameTimer % 60);
+            var formattedTime = (minutes < 10 ? "0" : "") + minutes + ":" + 
+                               (remainingSeconds < 10 ? "0" : "") + remainingSeconds;
+            
+            context.fillStyle = "#ffffff";
+            context.font = "16px Verdana";
+            context.fillText("Time: " + formattedTime, 200, 30);
+        }
     }
     
     // Draw level information
@@ -528,16 +595,13 @@ window.onload = function() {
         }
         context.fillText("Score: " + totalScore + "/" + objective.targetTotal, leftX, startY + 40);
         
-        // Draw time remaining if there's a time limit
-        if (objective.timeLimit > 0) {
-            var timeRemaining = Math.max(0, objective.timeLimit - gameTimer);
-            var minutes = Math.floor(timeRemaining / 60);
-            var seconds = Math.floor(timeRemaining % 60);
-            var timeText = "Time: " + (minutes < 10 ? "0" : "") + minutes + ":" + 
-                          (seconds < 10 ? "0" : "") + seconds;
-            context.fillText(timeText, leftX, startY + 54);
+        // Draw move count and remaining moves instead of time
+        var movesRemaining = Math.max(0, objective.moveLimit - gameStats.moveCount);
+        
+        if (!gameStarted) {
+            context.fillText("Moves: " + objective.moveLimit + " allowed", leftX, startY + 54);
         } else {
-            context.fillText("Time: Unlimited", leftX, startY + 54);
+            context.fillText("Moves: " + gameStats.moveCount + "/" + objective.moveLimit + " (Left: " + movesRemaining + ")", leftX, startY + 54);
         }
     }
     
@@ -688,9 +752,17 @@ window.onload = function() {
     function newGame() {
         // Reset timer and level completion
         gameTimer = 0;
-        timerRunning = true;
+        timerRunning = false; // Don't start timer until first move
+        gameStarted = false; // Reset game started flag
         levelComplete = false;
         totalScore = 0;
+        
+        // Reset game statistics
+        gameStats.moveCount = 0;
+        gameStats.match3Count = 0;
+        gameStats.match4Count = 0;
+        gameStats.match5Count = 0;
+        gameStats.completionTime = 0;
         
         // Set the gamestate to ready
         gamestate = gamestates.ready;
@@ -920,6 +992,15 @@ window.onload = function() {
                     // 3 tiles = 3×1 = 3, 4 tiles = 3×2 = 6, 5 tiles = 3×3 = 9, etc.
                     var points = 3 * (cluster.length - 2);
                     colorStats[tileType] += points;
+                    
+                    // Track match statistics
+                    if (cluster.length === 3) {
+                        gameStats.match3Count++;
+                    } else if (cluster.length === 4) {
+                        gameStats.match4Count++;
+                    } else if (cluster.length >= 5) {
+                        gameStats.match5Count++;
+                    }
                 }
             }
             level.tiles[column][row].type = -1; 
@@ -1044,6 +1125,15 @@ window.onload = function() {
     function mouseSwap(c1, r1, c2, r2) {
         // Save the current move
         currentmove = {column1: c1, row1: r1, column2: c2, row2: r2};
+        
+        // Start timer on first move
+        if (!gameStarted) {
+            gameStarted = true;
+            timerRunning = true;
+        }
+        
+        // Increment move count
+        gameStats.moveCount++;
     
         // Deselect
         level.selectedtile.selected = false;
@@ -1134,14 +1224,27 @@ window.onload = function() {
                     aibot = !aibot;
                     buttons[i].text = (aibot?"Disable":"Enable") + " AI Bot";
                 } else if (i == 3) {
+                    // LLM AI
+                    if (!geminiApiKey) {
+                        showGeminiInstructions();
+                    } else {
+                        llmai = !llmai;
+                        buttons[i].text = (llmai?"Disable":"Enable") + " LLM AI";
+                        if (llmai) {
+                            console.log("Gemini AI enabled! It will analyze the board and make moves every 2 seconds.");
+                        } else {
+                            console.log("Gemini AI disabled.");
+                        }
+                    }
+                } else if (i == 4) {
                     // Level 1
                     currentLevel = 1;
                     newGame();
-                } else if (i == 4) {
+                } else if (i == 5) {
                     // Level 2
                     currentLevel = 2;
                     newGame();
-                } else if (i == 5) {
+                } else if (i == 6) {
                     // Level 3
                     currentLevel = 3;
                     newGame();
@@ -1199,7 +1302,144 @@ window.onload = function() {
         if (totalScore >= objective.targetTotal) {
             levelComplete = true;
             timerRunning = false;
+            gameStats.completionTime = gameTimer; // Record completion time
         }
+    }
+    
+    // Get current game state for LLM AI analysis
+    function getGameStateForLLM() {
+        var gameState = {
+            board: [],
+            level: currentLevel,
+            score: totalScore,
+            targetScore: levelObjectives[currentLevel - 1].targetTotal,
+            movesUsed: gameStats.moveCount,
+            moveLimit: levelObjectives[currentLevel - 1].moveLimit,
+            movesRemaining: levelObjectives[currentLevel - 1].moveLimit - gameStats.moveCount,
+            availableMoves: moves.length
+        };
+        
+        // Convert board to simple 2D array
+        for (var i = 0; i < level.columns; i++) {
+            gameState.board[i] = [];
+            for (var j = 0; j < level.rows; j++) {
+                gameState.board[i][j] = level.tiles[i][j].type;
+            }
+        }
+        
+        return gameState;
+    }
+    
+    // Convert game state to prompt for Gemini
+    function createGamePrompt(gameState) {
+        var boardStr = "Current board state (8x8 grid, -1=empty, 0-4=colors):\n";
+        for (var j = 0; j < level.rows; j++) {
+            var row = "";
+            for (var i = 0; i < level.columns; i++) {
+                row += (gameState.board[i][j] >= 0 ? gameState.board[i][j] : "X") + " ";
+            }
+            boardStr += row + "\n";
+        }
+        
+        var prompt = `You are playing a Match-3 game. Here's the current situation:
+
+${boardStr}
+Level: ${gameState.level}
+Current Score: ${gameState.score}/${gameState.targetScore}
+Moves Used: ${gameState.movesUsed}/${gameState.moveLimit}
+Moves Remaining: ${gameState.movesRemaining}
+
+Rules:
+- Match 3+ tiles of the same color (horizontally or vertically)
+- You can swap two adjacent tiles (horizontal or vertical neighbors)
+- Goal: Reach the target score within the move limit
+- Colors are numbered 0-4
+
+Please analyze the board and suggest the best move. Respond with ONLY a JSON object in this exact format:
+{"fromCol": X, "fromRow": Y, "toCol": X, "toRow": Y, "reasoning": "brief explanation"}
+
+Where fromCol/fromRow is the source tile position and toCol/toRow is the target position to swap with.
+Remember: positions are 0-indexed, so valid positions are 0-7 for both columns and rows.`;
+
+        return prompt;
+    }
+    
+    // Call Gemini API to get next move
+    async function getGeminiMove() {
+        if (!geminiApiKey) {
+            console.log("Gemini API key not set. Please set geminiApiKey variable.");
+            return null;
+        }
+        
+        try {
+            llmaiProcessing = true;
+            
+            var gameState = getGameStateForLLM();
+            var prompt = createGamePrompt(gameState);
+            
+            var response = await fetch(geminiApiUrl + "?key=" + geminiApiKey, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [{
+                            text: prompt
+                        }]
+                    }]
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error("API request failed: " + response.status);
+            }
+            
+            var data = await response.json();
+            var geminiResponse = data.candidates[0].content.parts[0].text;
+            
+            // Parse JSON response
+            var moveData = JSON.parse(geminiResponse.trim());
+            
+            console.log("Gemini suggested move:", moveData);
+            
+            // Validate move
+            if (moveData.fromCol >= 0 && moveData.fromCol < level.columns &&
+                moveData.fromRow >= 0 && moveData.fromRow < level.rows &&
+                moveData.toCol >= 0 && moveData.toCol < level.columns &&
+                moveData.toRow >= 0 && moveData.toRow < level.rows &&
+                canSwap(moveData.fromCol, moveData.fromRow, moveData.toCol, moveData.toRow)) {
+                
+                return moveData;
+            } else {
+                console.log("Invalid move suggested by Gemini");
+                return null;
+            }
+            
+        } catch (error) {
+            console.error("Error calling Gemini API:", error);
+            return null;
+        } finally {
+            llmaiProcessing = false;
+        }
+    }
+    
+    // Set Gemini API key (call this function with your API key)
+    function setGeminiApiKey(apiKey) {
+        geminiApiKey = apiKey;
+        console.log("Gemini API key set successfully!");
+        console.log("You can now enable LLM AI to let Gemini play the game.");
+        console.log("To get a free API key, visit: https://aistudio.google.com/app/apikey");
+    }
+    
+    // Display API key instructions
+    function showGeminiInstructions() {
+        console.log("=== Gemini AI Setup Instructions ===");
+        console.log("1. Get a free Gemini API key from: https://aistudio.google.com/app/apikey");
+        console.log("2. Copy your API key");
+        console.log("3. In the browser console, type: setGeminiApiKey('YOUR_API_KEY_HERE')");
+        console.log("4. Click the 'LLM AI' button to enable Gemini to play the game");
+        console.log("5. Watch as Gemini analyzes the board and makes strategic moves!");
     }
     
     // Call init to start the game
