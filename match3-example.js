@@ -132,6 +132,12 @@ window.onload = function() {
     var llmaiAnimationTime = 0;
     var llmaiDelay = 2.0; // Delay between LLM AI moves (2 seconds)
     
+    // The new AI
+    var newai = false;
+    var newaiProcessing = false; // Track if New AI is processing a move
+    var newaiAnimationTime = 0;
+    var newaiDelay = 1.5; // Delay between New AI moves (1.5 seconds)
+    
     // Gemini API configuration
     var geminiApiKey = ""; // User will need to set this
     var geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
@@ -142,8 +148,8 @@ window.onload = function() {
     // Gui buttons
     var buttons = [ { x: 25, y: 315, width: 180, height: 35, text: "New Game"},
                     { x: 25, y: 355, width: 180, height: 35, text: "Show Moves"},
-                    { x: 25, y: 395, width: 180, height: 35, text: "Enable AI Bot"},
-                    { x: 25, y: 435, width: 180, height: 35, text: "LLM AI"},
+                    { x: 25, y: 395, width: 180, height: 35, text: "Enable AI"},
+                    { x: 25, y: 435, width: 180, height: 35, text: "Enable New AI"},
                     { x: 25, y: 480, width: 85, height: 25, text: "Level 1"},
                     { x: 120, y: 480, width: 85, height: 25, text: "Level 2"},
                     { x: 25, y: 510, width: 85, height: 25, text: "Level 3"}];
@@ -257,6 +263,41 @@ window.onload = function() {
                         });
                     }
                     llmaiAnimationTime = 0;
+                }
+            }
+            
+            // Let the New AI make a move, if enabled and game is still active
+            if (newai && !levelComplete && !gameover && !newaiProcessing) {
+                newaiAnimationTime += dt;
+                if (newaiAnimationTime > newaiDelay) {
+                    newaiProcessing = true;
+                    
+                    // Check if there are moves available
+                    findMoves();
+                    
+                    if (moves.length > 0) {
+                        // Find and execute the best move
+                        var bestMoveResult = findBestMove();
+                        if (bestMoveResult && bestMoveResult.move) {
+                            var move = bestMoveResult.move;
+                            var analysis = bestMoveResult.analysis;
+                            
+                            // Execute the best move
+                            mouseSwap(move.column1, move.row1, move.column2, move.row2);
+                            
+                            // Log the AI's reasoning
+                            if (analysis.score > 0) {
+                                console.log("New AI: Found scoring move! Expected score:", analysis.score, "Matches:", analysis.matchCount);
+                            } else {
+                                console.log("New AI: No scoring moves available, making strategic move");
+                            }
+                        }
+                    } else {
+                        console.log("New AI: No valid moves available");
+                    }
+                    
+                    newaiProcessing = false;
+                    newaiAnimationTime = 0;
                 }
             }
         } else if (gamestate == gamestates.resolve) {
@@ -1222,19 +1263,16 @@ window.onload = function() {
                 } else if (i == 2) {
                     // AI Bot
                     aibot = !aibot;
-                    buttons[i].text = (aibot?"Disable":"Enable") + " AI Bot";
+                    buttons[i].text = (aibot?"Disable":"Enable") + " AI";
                 } else if (i == 3) {
-                    // LLM AI
-                    if (!geminiApiKey) {
-                        showGeminiInstructions();
+                    // New AI
+                    newai = !newai;
+                    buttons[i].text = (newai?"Disable":"Enable") + " New AI";
+                    if (newai) {
+                        console.log("New AI enabled! It will analyze all possible moves and choose the best scoring option every 1.5 seconds.");
+                        console.log("This AI uses strategic analysis to maximize points and create longer matches.");
                     } else {
-                        llmai = !llmai;
-                        buttons[i].text = (llmai?"Disable":"Enable") + " LLM AI";
-                        if (llmai) {
-                            console.log("Gemini AI enabled! It will analyze the board and make moves every 2 seconds.");
-                        } else {
-                            console.log("Gemini AI disabled.");
-                        }
+                        console.log("New AI disabled.");
                     }
                 } else if (i == 4) {
                     // Level 1
@@ -1440,6 +1478,77 @@ Remember: positions are 0-indexed, so valid positions are 0-7 for both columns a
         console.log("3. In the browser console, type: setGeminiApiKey('YOUR_API_KEY_HERE')");
         console.log("4. Click the 'LLM AI' button to enable Gemini to play the game");
         console.log("5. Watch as Gemini analyzes the board and makes strategic moves!");
+    }
+    
+    // Analyze and score a potential move for New AI
+    function analyzeMove(move) {
+        // Make the move temporarily
+        swap(move.column1, move.row1, move.column2, move.row2);
+        
+        // Find what clusters this move would create
+        findClusters();
+        
+        var score = 0;
+        var matchCount = clusters.length;
+        
+        // Calculate score for this move
+        for (var i = 0; i < clusters.length; i++) {
+            var cluster = clusters[i];
+            // Score based on cluster length: 3×(length-2)
+            score += 3 * (cluster.length - 2);
+            
+            // Bonus points for longer clusters
+            if (cluster.length >= 4) {
+                score += 5; // Bonus for 4+ matches
+            }
+            if (cluster.length >= 5) {
+                score += 10; // Extra bonus for 5+ matches
+            }
+        }
+        
+        // Swap back to restore original state
+        swap(move.column1, move.row1, move.column2, move.row2);
+        
+        return {
+            move: move,
+            score: score,
+            matchCount: matchCount,
+            clusters: clusters.length
+        };
+    }
+    
+    // Find the best move for New AI
+    function findBestMove() {
+        if (moves.length === 0) {
+            return null;
+        }
+        
+        var bestMove = null;
+        var bestScore = -1;
+        var bestAnalysis = null;
+        
+        // Analyze each possible move
+        for (var i = 0; i < moves.length; i++) {
+            var analysis = analyzeMove(moves[i]);
+            
+            // Prefer moves that create matches
+            if (analysis.score > bestScore) {
+                bestScore = analysis.score;
+                bestMove = moves[i];
+                bestAnalysis = analysis;
+            }
+        }
+        
+        // If no scoring moves found, pick a random move
+        if (bestMove === null) {
+            bestMove = moves[Math.floor(Math.random() * moves.length)];
+            bestAnalysis = { score: 0, matchCount: 0 };
+        }
+        
+        return {
+            move: bestMove,
+            analysis: bestAnalysis
+        };
     }
     
     // Call init to start the game
